@@ -1,0 +1,40 @@
+﻿# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+
+# Node
+node_modules/
+dist/
+
+# Test and coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE and OS
+.vscode/
+.DS_Store
+Thumbs.db
+
+suricata-logs/
+
+# Generated ingestion markers
+*.ingested.sha256
+
+# Duplicate sample fixture
+/samples/suricata

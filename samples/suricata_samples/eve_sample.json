@@ -1,0 +1,2 @@
+
+{"timestamp":"2026-10-24T07:30:00.000000+0000","event_type":"alert","src_ip":"192.0.2.10","src_port":51515,"dest_ip":"192.0.2.20","dest_port":22,"proto":"TCP","alert":{"signature":"ZTShield File Ingestion Test","severity":2,"category":"Attempted Information Leak"}}
