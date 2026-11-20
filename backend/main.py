@@ -59,6 +59,7 @@ Severity = Literal["Critical", "High", "Medium", "Low"]
 
 class Settings(BaseSettings):
     ingest_token: str = Field(min_length=64, max_length=64)
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",
@@ -440,8 +441,9 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
+        origin.strip()
+        for origin in settings.cors_origins.split(",")
+        if origin.strip()
     ],
     allow_credentials=False,
     allow_methods=["GET", "POST"],
