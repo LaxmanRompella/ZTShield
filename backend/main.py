@@ -11,8 +11,25 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import String, URL, create_engine, select
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy import (
+    String,
+    URL,
+    create_engine,
+    select,
+    ForeignKey,
+    UniqueConstraint,
+    Text,
+    Integer,
+    Index,
+)
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    Session,
+    mapped_column,
+    sessionmaker,
+    relationship,
+)
 
 
 # Database: backend/ztshield.db
@@ -67,6 +84,120 @@ class Alert(Base):
     severity: Mapped[str] = mapped_column(String(20), index=True)
     status: Mapped[str] = mapped_column(String(30), default="New")
     source_type: Mapped[str] = mapped_column(String(30), default="manual")
+
+
+class Incident(Base):
+    __tablename__ = "incidents"
+
+    incident_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    severity: Mapped[str] = mapped_column(String(20), index=True)
+    risk_score: Mapped[int] = mapped_column(Integer, default=0)
+    risk_level: Mapped[str] = mapped_column(String(20), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="Open", index=True)
+    assigned_to: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), index=True)
+    updated_at: Mapped[str] = mapped_column(String(40))
+
+    evidence: Mapped[list["IncidentEvidence"]] = relationship(
+        back_populates="incident",
+        cascade="all, delete-orphan",
+    )
+    timeline: Mapped[list["IncidentTimeline"]] = relationship(
+        back_populates="incident",
+        cascade="all, delete-orphan",
+        order_by="IncidentTimeline.created_at",
+    )
+
+
+class IncidentDetection(Base):
+    __tablename__ = "incident_detections"
+    __table_args__ = (
+        UniqueConstraint(
+            "detection_key",
+            name="uq_incident_detection_key",
+        ),
+        Index(
+            "ix_incident_detections_incident_id",
+            "incident_id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+    )
+    detection_key: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+    detection_type: Mapped[str] = mapped_column(
+        String(60),
+        nullable=False,
+    )
+    incident_id: Mapped[str] = mapped_column(
+        ForeignKey("incidents.incident_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[str] = mapped_column(
+        String(40),
+        nullable=False,
+    )
+    updated_at: Mapped[str] = mapped_column(
+        String(40),
+        nullable=False,
+    )
+
+    incident: Mapped["Incident"] = relationship()
+
+
+
+class IncidentEvidence(Base):
+    __tablename__ = "incident_evidence"
+    __table_args__ = (
+        UniqueConstraint(
+            "incident_id",
+            "event_id",
+            name="uq_incident_event_evidence",
+        ),
+        Index("ix_incident_evidence_event_id", "event_id"),
+    )
+
+    evidence_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    incident_id: Mapped[str] = mapped_column(
+        ForeignKey("incidents.incident_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    event_id: Mapped[str] = mapped_column(
+        ForeignKey("alerts.event_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    evidence_type: Mapped[str] = mapped_column(String(50), default="alert")
+    explanation: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[str] = mapped_column(String(40))
+
+    incident: Mapped["Incident"] = relationship(back_populates="evidence")
+    alert: Mapped["Alert"] = relationship()
+
+
+class IncidentTimeline(Base):
+    __tablename__ = "incident_timeline"
+
+    timeline_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    incident_id: Mapped[str] = mapped_column(
+        ForeignKey("incidents.incident_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    action: Mapped[str] = mapped_column(String(50), nullable=False)
+    details: Mapped[str] = mapped_column(Text, default="")
+    actor: Mapped[str] = mapped_column(String(100), default="system")
+    created_at: Mapped[str] = mapped_column(String(40), index=True)
+
+    incident: Mapped["Incident"] = relationship(back_populates="timeline")
+
 
 
 class AlertCreate(BaseModel):
@@ -135,6 +266,69 @@ class AlertOut(BaseModel):
     severity: str
     status: str
     source_type: str
+
+
+
+IncidentStatus = Literal[
+    "Open",
+    "Investigating",
+    "Resolved",
+    "Closed",
+]
+
+
+class IncidentCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=5000)
+    severity: Severity
+    risk_score: int = Field(ge=0, le=100)
+    risk_level: Severity
+    assigned_to: str | None = Field(default=None, max_length=100)
+    evidence_event_ids: list[str] = Field(default_factory=list)
+
+
+class IncidentStatusUpdate(BaseModel):
+    status: IncidentStatus
+    actor: str = Field(default="system", min_length=1, max_length=100)
+    details: str = Field(default="", max_length=2000)
+
+
+class IncidentEvidenceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    evidence_id: str
+    event_id: str
+    evidence_type: str
+    explanation: str
+    created_at: str
+
+
+class IncidentTimelineOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    timeline_id: str
+    action: str
+    details: str
+    actor: str
+    created_at: str
+
+
+class IncidentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    incident_id: str
+    title: str
+    description: str
+    severity: str
+    risk_score: int
+    risk_level: str
+    status: str
+    assigned_to: str | None
+    created_at: str
+    updated_at: str
+    evidence: list[IncidentEvidenceOut]
+    timeline: list[IncidentTimelineOut]
+
 
 
 def get_db():
@@ -309,6 +503,205 @@ def list_alerts(
     return alerts
 
 
+
+@app.post(
+    "/api/incidents",
+    response_model=IncidentOut,
+    status_code=201,
+)
+def create_incident(
+    payload: IncidentCreate,
+    db: Session = Depends(get_db),
+):
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    incident_id = str(uuid4())
+
+    # Remove duplicate evidence IDs while preserving their order.
+    event_ids = list(dict.fromkeys(payload.evidence_event_ids))
+
+    # Validate that every referenced alert exists.
+    alerts = list(
+        db.scalars(
+            select(Alert).where(Alert.event_id.in_(event_ids))
+        ).all()
+    ) if event_ids else []
+
+    found_ids = {alert.event_id for alert in alerts}
+    missing_ids = set(event_ids) - found_ids
+
+    if missing_ids:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "One or more evidence alerts were not found.",
+                "missing_event_ids": sorted(missing_ids),
+            },
+        )
+
+    incident = Incident(
+        incident_id=incident_id,
+        title=payload.title,
+        description=payload.description,
+        severity=payload.severity,
+        risk_score=payload.risk_score,
+        risk_level=payload.risk_level,
+        status="Open",
+        assigned_to=payload.assigned_to,
+        created_at=now,
+        updated_at=now,
+    )
+
+    try:
+        db.add(incident)
+
+        for event_id in event_ids:
+            db.add(
+                IncidentEvidence(
+                    evidence_id=str(uuid4()),
+                    incident_id=incident_id,
+                    event_id=event_id,
+                    evidence_type="alert",
+                    explanation="Alert attached during incident creation.",
+                    created_at=now,
+                )
+            )
+
+        db.add(
+            IncidentTimeline(
+                timeline_id=str(uuid4()),
+                incident_id=incident_id,
+                action="incident_created",
+                details=f"Incident created with {len(event_ids)} evidence alert(s).",
+                actor="system",
+                created_at=now,
+            )
+        )
+
+        db.commit()
+        db.refresh(incident)
+
+    except Exception:
+        db.rollback()
+        raise
+
+    return incident
+
+
+
+@app.get("/api/incidents", response_model=list[IncidentOut])
+def list_incidents(
+    status: IncidentStatus | None = None,
+    severity: Severity | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+):
+    statement = select(Incident)
+
+    if status is not None:
+        statement = statement.where(Incident.status == status)
+
+    if severity is not None:
+        statement = statement.where(Incident.severity == severity)
+
+    statement = (
+        statement
+        .order_by(Incident.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+
+    return list(db.scalars(statement).all())
+
+
+
+@app.get(
+    "/api/incidents/{incident_id}",
+    response_model=IncidentOut,
+)
+def get_incident(
+    incident_id: str,
+    db: Session = Depends(get_db),
+):
+    incident = db.get(Incident, incident_id)
+
+    if incident is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Incident not found.",
+        )
+
+    # Load related records before returning the response.
+    _ = incident.evidence
+    _ = incident.timeline
+
+    return incident
+
+
+
+
+@app.patch(
+    "/api/incidents/{incident_id}/status",
+    response_model=IncidentOut,
+)
+def update_incident_status(
+    incident_id: str,
+    payload: IncidentStatusUpdate,
+    db: Session = Depends(get_db),
+):
+    incident = db.get(Incident, incident_id)
+
+    if incident is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Incident not found.",
+        )
+
+    allowed_transitions = {
+        "Open": {"Investigating"},
+        "Investigating": {"Resolved"},
+        "Resolved": {"Closed"},
+        "Closed": set(),
+    }
+
+    current_status = incident.status
+
+    if payload.status not in allowed_transitions.get(current_status, set()):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Invalid incident status transition: {current_status} -> {payload.status}",
+        )
+
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    try:
+        incident.status = payload.status
+        incident.updated_at = now
+
+        db.add(
+            IncidentTimeline(
+                timeline_id=str(uuid4()),
+                incident_id=incident_id,
+                action="status_changed",
+                details=(
+                    f"{current_status} -> {payload.status}. "
+                    f"{payload.details}"
+                ),
+                actor=payload.actor,
+                created_at=now,
+            )
+        )
+
+        db.commit()
+        db.refresh(incident)
+
+    except Exception:
+        db.rollback()
+        raise
+
+    return incident
+
+
 @app.post("/api/alerts", response_model=AlertOut, status_code=201)
 def create_alert(payload: AlertCreate, db: Session = Depends(get_db)):
     event = Alert(
@@ -326,6 +719,52 @@ def create_alert(payload: AlertCreate, db: Session = Depends(get_db)):
 
 
 
+LAB_NETWORKS = {
+    "USER": ipaddress.ip_network("192.168.10.0/24"),
+    "SERVER": ipaddress.ip_network("192.168.20.0/24"),
+    "DMZ": ipaddress.ip_network("192.168.30.0/24"),
+    "MANAGEMENT": ipaddress.ip_network("192.168.40.0/24"),
+    "TELEMETRY": ipaddress.ip_network("192.168.56.0/24"),
+}
+
+PFSENSE_INTERFACE_ZONES = {
+    "em0": "WAN",
+    "em1": "USER",
+    "em2": "SERVER",
+    "em3": "DMZ",
+    "em4": "MANAGEMENT",
+    "em5": "TELEMETRY",
+    "opt1": "SERVER",
+    "opt2": "DMZ",
+    "opt3": "MANAGEMENT",
+    "opt4": "TELEMETRY",
+}
+
+
+def classify_pfsense_interface(interface: str) -> str:
+    """Map a pfSense interface identifier to its ZTShield zone."""
+    return PFSENSE_INTERFACE_ZONES.get(
+        interface.strip().lower(),
+        interface.strip().upper(),
+    )
+
+def classify_network_zone(source_ip: str, destination_ip: str) -> str:
+    """Classify an event using the configured ZTShield lab subnets."""
+
+    for address in (source_ip, destination_ip):
+        parsed_address = ipaddress.ip_address(address)
+
+        for zone, network in LAB_NETWORKS.items():
+            if (
+                parsed_address.version == network.version
+                and parsed_address in network
+            ):
+                return zone
+
+    return "UNKNOWN"
+
+
+
 @app.post(
     "/api/ingest/suricata",
     response_model=AlertOut,
@@ -338,6 +777,7 @@ def ingest_suricata_event(
         alias="X-ZTShield-Capture-Mode",
     ),
     db: Session = Depends(get_db),
+    _: None = Depends(verify_ingest_token),
 ):
     # Accept only Suricata alert events.
     if payload.event_type.casefold() != "alert":
@@ -423,7 +863,10 @@ def ingest_suricata_event(
         source_ip=str(source_address),
         destination=destination,
         protocol=payload.proto.upper(),
-        zone="UNKNOWN",
+        zone=classify_network_zone(
+            str(source_address),
+            str(destination_address),
+        ),
         severity=severity,
         status="New",
         source_type=source_type,
@@ -522,7 +965,7 @@ def ingest_pfsense_event(
         source_ip=str(source_address),
         destination=destination,
         protocol=protocol,
-        zone=payload.interface.upper(),
+        zone=classify_pfsense_interface(payload.interface),
         severity=payload.severity.title(),
         status="New",
         source_type="pfsense_live",
@@ -580,7 +1023,7 @@ def get_summary(db: Session = Depends(get_db)):
             severity: sum(
                 alert.severity == severity for alert in alerts
             )
-            for severity in ["Critical", "High", "Medium", "Low"]
+            for severity in ["Critical", "High", "Medium", "Low", "Info"]
         },
         "demo_events": sum(
             alert.source_type == "demo" for alert in alerts
@@ -588,7 +1031,7 @@ def get_summary(db: Session = Depends(get_db)):
         "non_demo_events": sum(
             alert.source_type != "demo" for alert in alerts
         ),
-        "connected_sensors": 0,
+        "connected_sensors": len(active_sources),
         "recent_live_sources": len(active_sources),
         "recent_activity_window_seconds": 300,
     }
@@ -648,6 +1091,10 @@ def get_sensors(db: Session = Depends(get_db)):
                 event_time = event_time.astimezone(timezone.utc)
 
             except (ValueError, TypeError):
+                continue
+
+            # Ignore future-dated events when determining sensor activity.
+            if event_time > now:
                 continue
 
             if latest_time is None or event_time > latest_time:

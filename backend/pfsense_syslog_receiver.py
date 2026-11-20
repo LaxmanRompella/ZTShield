@@ -4,6 +4,10 @@ import json
 import logging
 import re
 import socketserver
+import hashlib
+import os
+from pathlib import Path
+from dotenv import load_dotenv
 from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -16,6 +20,17 @@ EXPECTED_SENDER = "192.168.56.2"
 
 # Existing FastAPI backend.
 API_URL = "http://127.0.0.1:8000/api/ingest/pfsense"
+
+# Load the same secure token used by the FastAPI backend.
+ENV_FILE = Path(__file__).with_name(".env")
+load_dotenv(ENV_FILE)
+
+INGEST_TOKEN = os.getenv("ZTSHIELD_INGEST_TOKEN")
+
+if not INGEST_TOKEN or len(INGEST_TOKEN) != 64:
+    raise RuntimeError(
+        "Missing or invalid ZTSHIELD_INGEST_TOKEN in backend/.env"
+    )
 
 # Map pfSense physical interface names to configured logical names.
 INTERFACE_LABELS = {
@@ -174,29 +189,45 @@ def parse_filterlog(message: str) -> dict | None:
         "dest_port": destination_port,
         "rule_number": rule_number,
         "rule_tracker": rule_tracker,
+        "severity": "medium" if action == "block" else "info",
     }
 
 
+
 def forward_to_api(payload: dict) -> None:
-    """Submit a normalized event to the existing FastAPI endpoint."""
+    """Submit a normalized event securely to the FastAPI endpoint."""
+
+    # Generate a deterministic fingerprint for duplicate protection.
+    canonical_payload = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    fingerprint = hashlib.sha256(canonical_payload).hexdigest().upper()
 
     body = json.dumps(payload).encode("utf-8")
 
     request = Request(
         API_URL,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "X-ZTShield-Token": INGEST_TOKEN,
+            "X-Event-Fingerprint": fingerprint,
+        },
         method="POST",
     )
 
     try:
         with urlopen(request, timeout=5) as response:
             logging.info(
-                "Event submitted: HTTP %s | %s -> %s | %s",
+                "Event submitted: HTTP %s | %s -> %s | %s | fingerprint=%s",
                 response.status,
                 payload["src_ip"],
                 payload["dest_ip"],
                 payload["action"],
+                fingerprint[:12],
             )
 
     except HTTPError as exc:
@@ -211,6 +242,7 @@ def forward_to_api(payload: dict) -> None:
 
     except TimeoutError:
         logging.error("FastAPI request timed out")
+
 
 
 class SyslogUDPHandler(socketserver.BaseRequestHandler):

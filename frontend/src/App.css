@@ -97,7 +97,7 @@ button {
 }
 
 .environment-dot,
-.planned-dot,
+.configured-dot,
 .legend-dot {
   width: 8px;
   height: 8px;
@@ -711,8 +711,9 @@ button {
   white-space: nowrap;
 }
 
-.planned-dot {
-  background: #e1ad62;
+.configured-dot {
+  background: #63c98a;
+  box-shadow: 0 0 8px #63c98a30;
 }
 
 .zone-legend {

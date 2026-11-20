@@ -1,7 +1,10 @@
-import argparse
+﻿import argparse
 import json
 import time
 import hashlib
+import os
+
+from dotenv import load_dotenv
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -10,6 +13,15 @@ from urllib.request import Request, urlopen
 DEFAULT_API_URL = "http://127.0.0.1:8000/api/ingest/suricata"
 
 
+ENV_FILE = Path(__file__).with_name(".env")
+load_dotenv(ENV_FILE)
+
+INGEST_TOKEN = os.getenv("ZTSHIELD_INGEST_TOKEN")
+
+if not INGEST_TOKEN or len(INGEST_TOKEN) != 64:
+    raise RuntimeError(
+        "Missing or invalid ZTSHIELD_INGEST_TOKEN in backend/.env"
+    )
 
 def event_fingerprint(event: dict) -> str:
     """Create a stable SHA-256 fingerprint for an EVE event."""
@@ -49,19 +61,38 @@ def get_file_identity(path: Path) -> str:
 
 def save_state(path: Path, identity: str, offset: int) -> None:
     state_path = Path(str(path) + ".watch-state.json")
-    temporary_path = Path(str(state_path) + ".tmp")
 
     data = {
         "file_identity": identity,
         "offset": offset,
     }
 
-    temporary_path.write_text(
-        json.dumps(data),
-        encoding="utf-8",
-    )
-    temporary_path.replace(state_path)
+    temporary_path = None
 
+    for attempt in range(5):
+        temporary_path = state_path.with_name(
+            f"{state_path.name}.{time.time_ns()}.{attempt}.tmp"
+        )
+
+        try:
+            temporary_path.write_text(
+                json.dumps(data),
+                encoding="utf-8",
+            )
+            temporary_path.replace(state_path)
+            return
+
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.2 * (attempt + 1))
+
+        finally:
+            if temporary_path.exists():
+                try:
+                    temporary_path.unlink()
+                except OSError:
+                    pass
 
 def post_alert(
     event: dict,
@@ -75,6 +106,7 @@ def post_alert(
         headers={
             "Content-Type": "application/json",
             "X-ZTShield-Capture-Mode": capture_mode,
+            "X-ZTShield-Token": INGEST_TOKEN,
         },
         method="POST",
     )
@@ -86,7 +118,7 @@ def post_alert(
                     response.read().decode("utf-8")
                 )
                 print(
-                    f"INGESTED {body['event_id']} — {body['title']}",
+                    f"INGESTED {body['event_id']} - {body['title']}",
                     flush=True,
                 )
                 return True, False
@@ -99,7 +131,7 @@ def post_alert(
         print(f"API HTTP {exc.code}: {detail}", flush=True)
 
         # A permanently invalid record should not block later events.
-        if 400 <= exc.code < 500 and exc.code != 429:
+        if 400 <= exc.code < 500 and exc.code not in (401, 403, 429):
             return False, True
 
         return False, False

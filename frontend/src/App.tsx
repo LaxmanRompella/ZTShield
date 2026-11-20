@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import "./App.css";
 
-type Severity = "Critical" | "High" | "Medium" | "Low";
+type Severity = "Critical" | "High" | "Medium" | "Low" | "Info";
 
 type SecurityAlert = {
   id: string;
@@ -85,12 +85,15 @@ type ApiSensorsResponse = {
 };
 
 
+
 const zones = [
   {
     name: "User network",
     id: "VLAN 10",
     subnet: "192.168.10.0/24",
     rule: "Restricted access",
+    status: "CONFIGURED",
+    note: "USER network configured in pfSense. Access-policy validation is tracked separately.",
     icon: Wifi,
   },
   {
@@ -98,6 +101,8 @@ const zones = [
     id: "VLAN 20",
     subnet: "192.168.20.0/24",
     rule: "Application-specific access",
+    status: "CONFIGURED",
+    note: "SERVER network configured in pfSense. Segmentation blocking has been validated.",
     icon: Server,
   },
   {
@@ -105,6 +110,8 @@ const zones = [
     id: "VLAN 30",
     subnet: "192.168.30.0/24",
     rule: "Public-facing services only",
+    status: "CONFIGURED",
+    note: "DMZ network configured in pfSense. Additional policy validation remains.",
     icon: Network,
   },
   {
@@ -112,9 +119,21 @@ const zones = [
     id: "VLAN 40",
     subnet: "192.168.40.0/24",
     rule: "Privileged access only",
+    status: "CONFIGURED",
+    note: "MANAGEMENT network configured in pfSense. Segmentation blocking has been validated.",
     icon: ShieldCheck,
   },
+  {
+    name: "Telemetry",
+    id: "ZT_TELEMETRY",
+    subnet: "192.168.56.0/24",
+    rule: "Dedicated security monitoring and log collection",
+    status: "CONFIGURED",
+    note: "Telemetry network configured. pfSense syslog forwarding to the collector is operational.",
+    icon: Network,
+  },
 ];
+
 
 const navItems = [
   { label: "Overview", icon: LayoutDashboard },
@@ -210,12 +229,18 @@ function App() {
 
     void loadData();
 
-    return () => {
+  return () => {
       cancelled = true;
     };
   }, [reloadKey]);
 
+  const integratedSensors = sensors.filter(
+    (sensor) => sensor.status !== "not_integrated",
+  );
 
+  const activeIntegratedSensors = integratedSensors.filter(
+    (sensor) => sensor.status === "recently_active",
+  );
   const filteredAlerts = useMemo(() => {
   const term = search.trim().toLowerCase();
 
@@ -325,18 +350,27 @@ const trafficBars = useMemo(() => {
 
     const link = document.createElement("a");
     link.href = url;
-    link.download = "ztshield-demo-alerts.csv";
+    link.download = "ztshield-security-alerts.csv";
     link.click();
     URL.revokeObjectURL(url);
-    setNotice("Filtered demo alerts exported as CSV.");
+
+    const exportedCount = rows.length;
+    const isFiltered =
+      search.trim() !== "" || severityFilter !== "All";
+
+    setNotice(
+      isFiltered
+        ? `${exportedCount} filtered security events exported successfully as CSV.`
+        : `${exportedCount} security events exported successfully as CSV.`,
+    );
   }
 
   const pageDescriptions: Record<string, string> = {
-    Overview: "Monitor your simulated enterprise security environment.",
-    Alerts: "Search, filter and inspect security events.",
-    "Network Zones": "Review the planned network segmentation model.",
-    Sensors: "Inspect integrations planned for the security lab.",
-    "Lab Plan": "Track the components required to complete ZTShield.",
+    Overview: "Monitor your zero-trust network security environment.",
+    Alerts: "Search, filter and investigate security events.",
+    "Network Zones": "Review network segmentation and access policies.",
+    Sensors: "Monitor telemetry integrations and sensor activity.",
+    "Lab Plan": "Track implementation progress and remaining integrations.",
   };
 
   return (
@@ -356,7 +390,7 @@ const trafficBars = useMemo(() => {
           <span className="environment-dot" />
           <div>
             <div className="environment-title">Local lab</div>
-            <div className="environment-subtitle">Simulation mode</div>
+            <div className="environment-subtitle">Live Lab Environment</div>
           </div>
         </div>
 
@@ -396,8 +430,8 @@ const trafficBars = useMemo(() => {
             <span>Policies not yet connected</span>
           </div>
           <p className="sidebar-note">
-            Dashboard metrics use illustrative data until real telemetry is
-            integrated.
+            Live telemetry is connected. Additional integrations and security
+            policies are still being implemented.
           </p>
           <div className="profile">
             <div className="avatar">ZS</div>
@@ -475,7 +509,7 @@ const trafficBars = useMemo(() => {
                   </div>
                   <div className="metric-footer">
                     <span className="muted-note">
-                      {summary ? `${summary.demo_events} demo records` : "Waiting for API"}                 
+                      {summary ? `${summary.demo_events} demo records` : "Waiting for API"}
                     </span>
                     <span className="metric-neutral">
                       <ArrowUpRight size={14} /> Sample
@@ -547,7 +581,7 @@ const trafficBars = useMemo(() => {
                   </div>
                 </article>
               </div>
-              
+
 <section className="panel severity-breakdown-panel">
   <div className="severity-breakdown-header">
     <div>
@@ -565,7 +599,7 @@ const trafficBars = useMemo(() => {
   </div>
 
   <div className="severity-breakdown-grid">
-    {(["Critical", "High", "Medium", "Low"] as Severity[]).map(
+    {(["Critical", "High", "Medium", "Low", "Info"] as Severity[]).map(
       (severity) => {
         const count = summary?.by_severity[severity] ?? 0;
         const total = summary
@@ -632,8 +666,8 @@ const trafficBars = useMemo(() => {
                     role="img"
                     aria-label="Bar chart showing stored security event counts by hour over the last 24 hours"
                   >
-                    
-                    
+
+
                     {trafficBars.map(({ height, count }, index) => (
                       <div
                         className="bar-column"
@@ -667,7 +701,7 @@ const trafficBars = useMemo(() => {
                   <div className="panel-heading">
                     <div>
                       <h2>Network zones</h2>
-                      <p>Planned segmentation</p>
+                      <p>Configured lab zones</p>
                     </div>
                     <button
                       className="text-button"
@@ -689,13 +723,13 @@ const trafficBars = useMemo(() => {
                           <strong>{zone.name}</strong>
                           <span>{zone.id} · {zone.subnet}</span>
                         </div>
-                        <span className="planned-dot" title="Not connected" />
+                        <span className="configured-dot" title="Configured in pfSense" />
                       </div>
                     );
                   })}
                   <div className="zone-legend">
-                    <span className="planned-dot" />
-                    Planned — not yet connected
+                    <span className="configured-dot" />
+                    Configured in pfSense; policy validation tracked separately
                   </div>
                 </section>
               </div>
@@ -713,7 +747,7 @@ const trafficBars = useMemo(() => {
                       <div className="zone-icon large">
                         <Icon size={21} />
                       </div>
-                      <span className="subtle-badge">PLANNED</span>
+                      <span className="subtle-badge">{zone.status}</span>
                     </div>
                     <h2>{zone.name}</h2>
                     <span className="zone-vlan">{zone.id}</span>
@@ -726,8 +760,7 @@ const trafficBars = useMemo(() => {
                       <strong>{zone.rule}</strong>
                     </div>
                     <p className="card-help">
-                      Firewall configuration and live status will be added
-                      during lab integration.
+                      {zone.note}
                     </p>
                   </article>
                 );
@@ -735,7 +768,7 @@ const trafficBars = useMemo(() => {
             </section>
           )}
 
-      
+
           {activePage === "Sensors" && (
             <section className="sensor-grid">
               {sensors.map((sensor) => {
@@ -809,7 +842,7 @@ const trafficBars = useMemo(() => {
               <div className="panel-heading">
                 <div>
                   <h2>Implementation roadmap</h2>
-                  <p>Planned work — no lab tests have been executed yet</p>
+                  <p>Remaining validation and integration work</p>
                 </div>
                 <FlaskConical size={21} className="heading-icon" />
               </div>
@@ -909,7 +942,7 @@ const trafficBars = useMemo(() => {
                           <div className="event-meta">
                             → {alert.destination} · {alert.protocol}
                           </div>
-                        </td>                        
+                        </td>
                         <td>
                           <span className="zone-tag">
                             {alert.sourceType === "suricata_live"
@@ -967,7 +1000,9 @@ const trafficBars = useMemo(() => {
               <div className="table-foot">
                 <span>
                   <span className="environment-dot" />
-                  Sample data · Not connected to Suricata
+                  {apiConnected
+                    ? `Telemetry: ${activeIntegratedSensors.length} of ${integratedSensors.length} integrated sensors recently active`
+                    : "Telemetry API unavailable"}
                 </span>
                 <button
                   className="text-button"
@@ -998,7 +1033,15 @@ const trafficBars = useMemo(() => {
           <section className="alert-modal" role="dialog" aria-modal="true" aria-labelledby="detail-title">
             <div className="modal-heading">
               <div>
-                <span className="eyebrow">SAMPLE EVENT DETAILS</span>
+                <span className="eyebrow">
+                  {selectedAlert.sourceType === "demo"
+                    ? "DEMO EVENT"
+                    : selectedAlert.sourceType === "suricata_live"
+                      ? "LIVE SURICATA ALERT"
+                      : selectedAlert.sourceType === "pfsense_live"
+                        ? "LIVE PFSENSE EVENT"
+                        : "STORED SECURITY EVENT"}
+                </span>
                 <h2 id="detail-title">{selectedAlert.title}</h2>
                 <p>{selectedAlert.id} · {selectedAlert.time}</p>
               </div>
@@ -1019,8 +1062,13 @@ const trafficBars = useMemo(() => {
               <div><span>Workflow status</span><strong>{selectedAlert.status}</strong></div>
             </div>
             <p className="modal-disclaimer">
-              This is illustrative data for the interface prototype. No live
-              packet, firewall or intrusion-detection evidence is attached.
+              {selectedAlert.sourceType === "demo"
+                ? "This is a demonstration event generated for the ZTShield interface."
+                : selectedAlert.sourceType === "suricata_live"
+                  ? "This alert was ingested from live Suricata IDS telemetry. The alert metadata is stored; a full packet capture is not attached."
+                  : selectedAlert.sourceType === "pfsense_live"
+                    ? "This event was ingested from live pfSense firewall telemetry. The firewall event metadata is stored; a full packet capture is not attached."
+                    : "This is a stored security event. Its source classification is available, but additional evidence may not be attached."}
             </p>
             <button className="button-primary" onClick={() => setSelectedAlert(null)}>
               Close details

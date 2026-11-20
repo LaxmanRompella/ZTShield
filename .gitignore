@@ -38,3 +38,6 @@ suricata-logs/
 
 # Duplicate sample fixture
 /samples/suricata
+
+# Local recovery backups
+*.backup-*
