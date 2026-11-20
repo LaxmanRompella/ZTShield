@@ -197,7 +197,7 @@ Network interface names and IP addresses may need to be adapted to the host envi
 ### 9.1 Clone the repository
 
 ```powershell
-git clone <YOUR_GITHUB_REPOSITORY_URL>
+git clone https://github.com/LaxmanRompella/ZTShield.git
 cd ZTShield
 ```
 
