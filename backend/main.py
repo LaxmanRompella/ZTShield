@@ -70,7 +70,10 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
+print(
+    f"ZTShield CORS allowlist: {settings.cors_origins!r}",
+    flush=True,
+)
 
 class Alert(Base):
     __tablename__ = "alerts"
